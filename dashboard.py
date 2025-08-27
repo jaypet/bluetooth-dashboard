@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # --- Data Storage ---
 global_sensor_data = {}
+historical_data = {}
 
 # --- Flask App ---
 app = Flask(__name__)
@@ -39,6 +40,19 @@ def index():
 @app.route('/api/data')
 def get_data():
     return jsonify(global_sensor_data)
+
+@app.route('/api/history/<sensor_name>')
+def get_history(sensor_name):
+    """Get historical data for a specific sensor."""
+    if sensor_name in historical_data:
+        # Return last 24 hours of data (max 288 points at 5min intervals)
+        recent_data = historical_data[sensor_name][-288:]
+        return jsonify({
+            'timestamps': [entry['timestamp'] for entry in recent_data],
+            'temperatures': [entry['temperature_c'] for entry in recent_data],
+            'humidity': [entry['humidity'] for entry in recent_data]
+        })
+    return jsonify({'timestamps': [], 'temperatures': [], 'humidity': []})
 
 # --- Bluetooth Logic ---
 def parse_tp357s_data(data):
@@ -76,11 +90,27 @@ async def read_sensor_once(name, address):
             logger.info(f"Raw data from {name}: {data.hex()} (length: {len(data)})")
             parsed_data = parse_tp357s_data(data)
             if parsed_data:
+                timestamp = datetime.now().isoformat()
                 global_sensor_data[name] = {
                     **parsed_data,
-                    'last_updated': datetime.now().isoformat(),
+                    'last_updated': timestamp,
                     'status': 'online'
                 }
+                
+                # Store historical data
+                if name not in historical_data:
+                    historical_data[name] = []
+                
+                historical_data[name].append({
+                    'timestamp': timestamp,
+                    'temperature_c': parsed_data['temperature_c'],
+                    'humidity': parsed_data['humidity']
+                })
+                
+                # Keep only last 1000 readings (~8 hours at 30s intervals)
+                if len(historical_data[name]) > 1000:
+                    historical_data[name] = historical_data[name][-1000:]
+                
                 logger.info(f"SUCCESS: {name} - {parsed_data['temperature_c']}°C, {parsed_data['humidity']}% ")
                 data_received.set()
 
@@ -155,6 +185,7 @@ HTML_TEMPLATE = """
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
         :root {
@@ -369,6 +400,70 @@ HTML_TEMPLATE = """
             font-weight: 500;
         }
         
+        .section-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border-medium), transparent);
+            margin: 32px 0;
+            position: relative;
+        }
+        
+        .section-divider::before {
+            content: 'HISTORICAL DATA';
+            position: absolute;
+            top: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-primary);
+            padding: 0 16px;
+            font-size: 10px;
+            color: var(--text-muted);
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+        
+        .card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-light);
+            border-radius: 16px;
+            padding: 28px;
+            box-shadow: var(--elevation-2);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-light);
+        }
+        
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        
+        .chart-container {
+            height: 200px;
+            position: relative;
+        }
+        
         @media (max-width: 768px) {
             .container { padding: 0 16px; }
             .header { padding: 16px 0; }
@@ -475,13 +570,131 @@ HTML_TEMPLATE = """
                                 <div class="current-sublabel">Real-time reading</div>
                             </div>
                         </div>
+                        
+                        <div class="section-divider"></div>
+                        
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">Temperature History</div>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="temp-chart-${name.replace(' ', '-').toLowerCase()}"></canvas>
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">Humidity History</div>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="humidity-chart-${name.replace(' ', '-').toLowerCase()}"></canvas>
+                            </div>
+                        </div>
                     `;
                     
                     container.appendChild(sensorGroup);
+                    
+                    // Create charts for this sensor
+                    setTimeout(() => {
+                        createCharts(name);
+                    }, 100);
                 }
             } catch (error) {
                 console.error("Failed to fetch sensor data:", error);
                 document.getElementById('header-status').textContent = 'Connection Error';
+            }
+        }
+        
+        async function createCharts(sensorName) {
+            try {
+                const response = await fetch(`/api/history/${encodeURIComponent(sensorName)}`);
+                const historyData = await response.json();
+                
+                if (!historyData.timestamps || historyData.timestamps.length === 0) {
+                    return; // No historical data yet
+                }
+                
+                const chartId = sensorName.replace(' ', '-').toLowerCase();
+                const tempCtx = document.getElementById(`temp-chart-${chartId}`);
+                const humidCtx = document.getElementById(`humidity-chart-${chartId}`);
+                
+                if (!tempCtx || !humidCtx) return;
+                
+                const labels = historyData.timestamps.map(ts => {
+                    const date = new Date(ts);
+                    return date.toLocaleTimeString('en-US', { 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                });
+                
+                const chartOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            border: { display: false },
+                            grid: { color: '#404040', drawTicks: false },
+                            ticks: { 
+                                color: '#b3b3b3', 
+                                font: { size: 10 },
+                                maxTicksLimit: 6
+                            }
+                        },
+                        y: {
+                            beginAtZero: false,
+                            border: { display: false },
+                            grid: { color: '#404040', drawTicks: false },
+                            ticks: { 
+                                color: '#b3b3b3', 
+                                font: { size: 10 }
+                            }
+                        }
+                    },
+                    elements: {
+                        point: { radius: 0, hoverRadius: 4 }
+                    }
+                };
+                
+                // Temperature Chart
+                new Chart(tempCtx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: historyData.temperatures,
+                            borderColor: '#2196f3',
+                            backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: chartOptions
+                });
+                
+                // Humidity Chart  
+                new Chart(humidCtx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: historyData.humidity,
+                            borderColor: '#00acc1',
+                            backgroundColor: 'rgba(0, 172, 193, 0.1)', 
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: chartOptions
+                });
+                
+            } catch (error) {
+                console.error(`Failed to create charts for ${sensorName}:`, error);
             }
         }
 

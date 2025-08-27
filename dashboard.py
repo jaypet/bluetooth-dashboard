@@ -1,186 +1,152 @@
 #!/usr/bin/env python3
 """
 TP357S Bluetooth Dashboard
-Polls sensors every 30 seconds and serves web dashboard
+Polls sensors every 30 seconds and serves a web dashboard.
 """
 
 import asyncio
 import struct
-import json
-import time
-from datetime import datetime, timedelta
-from bleak import BleakClient
-from flask import Flask, render_template, jsonify
+from datetime import datetime
 import threading
 import logging
+from flask import Flask, render_template_string, jsonify
+from bleak import BleakClient
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# --- Configuration ---
+POLLING_INTERVAL_SECONDS = 30
+CONNECTION_TIMEOUT = 15
+WEB_PORT = 5000
+SENSORS = {
+    "Colonisation Bin": "E5:35:C4:81:8D:8C",
+    "Fruiting Bucket": "C1:92:D2:5A:72:3E"
+}
+DATA_CHAR_UUID = "00010203-0405-0607-0809-0a0b0c0d2b10"
+
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class TP357SMonitor:
-    def __init__(self):
-        # Configuration
-        self.config = {
-            'polling_interval_seconds': 30,
-            'connection_timeout': 10,
-            'web_port': 5000
-        }
-        
-        self.sensors = {
-            "Colonisation Box": "E5:35:C4:81:8D:8C",
-            "Fruiting Bucket": "C1:92:D2:5A:72:3E"
-        }
-        
-        # Data storage
-        self.latest_data = {}
-        self.last_updated = {}
-        
-        # Web app
-        self.app = Flask(__name__)
-        self.setup_routes()
-        
-    def setup_routes(self):
-        @self.app.route('/')
-        def index():
-            return render_template('dashboard.html')
-        
-        @self.app.route('/api/data')
-        def get_data():
-            response_data = {}
-            for name in self.sensors:
-                if name in self.latest_data:
-                    response_data[name] = {
-                        **self.latest_data[name],
-                        'last_updated': self.last_updated[name].isoformat() if name in self.last_updated else None,
-                        'status': 'online' if name in self.last_updated and 
-                                 (datetime.now() - self.last_updated[name]).seconds < 60 else 'offline'
-                    }
-                else:
-                    response_data[name] = {
-                        'temperature_c': None,
-                        'temperature_f': None,
-                        'humidity': None,
-                        'status': 'offline',
-                        'last_updated': None
-                    }
-            return jsonify(response_data)
-    
-    def parse_tp357s_data(self, data):
-        """Parse TP357S data format: Byte 3 = temp*10, Byte 5 = humidity"""
-        if len(data) >= 6:
-            # Temperature in Celsius (byte 3 divided by 10)
-            temp_c = data[3] / 10.0
-            # Convert to Fahrenheit
-            temp_f = (temp_c * 9/5) + 32
-            # Humidity percentage (byte 5)
-            humidity = data[5]
-            
-            return {
-                'temperature_c': round(temp_c, 1),
-                'temperature_f': round(temp_f, 1),
-                'humidity': humidity,
-                'raw_data': data.hex()
-            }
+# --- Data Storage ---
+global_sensor_data = {}
+
+# --- Flask App ---
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/data')
+def get_data():
+    return jsonify(global_sensor_data)
+
+# --- Bluetooth Logic ---
+def parse_tp357s_data(data):
+    """Parses the 7-byte data from a TP357S sensor."""
+    if not data or len(data) != 7:
+        logger.warning(f"Invalid data received: {data.hex() if data else 'None'}")
         return None
     
-    async def read_sensor_once(self, name, mac_address):
-        """Read data from a single sensor and disconnect immediately"""
-        try:
-            logger.info(f"Connecting to {name}...")
-            async with BleakClient(mac_address, timeout=self.config['connection_timeout']) as client:
-                if not client.is_connected:
-                    logger.warning(f"Failed to connect to {name}")
-                    return False
-                
-                logger.info(f"Connected to {name}, reading data...")
-                
-                # Try to read from the real-time characteristic
-                realtime_uuid = "00010203-0405-0607-0809-0a0b0c0d2b10"
-                
-                try:
-                    data = await client.read_gatt_char(realtime_uuid)
-                    if data and len(data) >= 6:
-                        parsed = self.parse_tp357s_data(data)
-                        if parsed:
-                            self.latest_data[name] = parsed
-                            self.last_updated[name] = datetime.now()
-                            logger.info(f"{name}: {parsed['temperature_c']}°C, {parsed['humidity']}%")
-                            return True
-                except Exception as e:
-                    logger.warning(f"Failed to read from {name} realtime characteristic: {e}")
-                
-                # Try notification approach if direct read didn't work
-                notification_uuid = "8ec90001-f315-4f60-9fb8-838830daea50"
-                data_received = False
-                
-                def notification_handler(sender, data):
-                    nonlocal data_received
-                    parsed = self.parse_tp357s_data(data)
-                    if parsed:
-                        self.latest_data[name] = parsed
-                        self.last_updated[name] = datetime.now()
-                        logger.info(f"{name}: {parsed['temperature_c']}°C, {parsed['humidity']}%")
-                        data_received = True
-                
-                try:
-                    await client.start_notify(notification_uuid, notification_handler)
-                    # Wait briefly for notifications
-                    for _ in range(10):
-                        if data_received:
-                            break
-                        await asyncio.sleep(0.5)
-                    await client.stop_notify(notification_uuid)
-                    
-                    if data_received:
-                        return True
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to get notifications from {name}: {e}")
-                
-                logger.warning(f"No data received from {name}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error reading {name}: {e}")
-            return False
-    
-    async def poll_sensors(self):
-        """Poll all sensors sequentially"""
-        while True:
-            start_time = time.time()
-            logger.info("Starting sensor polling cycle...")
-            
-            for name, mac_address in self.sensors.items():
-                success = await self.read_sensor_once(name, mac_address)
-                if not success:
-                    logger.warning(f"Failed to read from {name}")
-                
-                # Brief pause between sensors
-                await asyncio.sleep(2)
-            
-            # Calculate how long to wait before next cycle
-            elapsed = time.time() - start_time
-            wait_time = max(0, self.config['polling_interval_seconds'] - elapsed)
-            
-            if wait_time > 0:
-                logger.info(f"Polling cycle complete, waiting {wait_time:.1f}s until next cycle...")
-                await asyncio.sleep(wait_time)
-            else:
-                logger.info("Polling cycle took longer than interval, starting next cycle immediately")
-    
-    def run_web_server(self):
-        """Run the Flask web server"""
-        self.app.run(host='0.0.0.0', port=self.config['web_port'], debug=False)
-    
-    def start_monitoring(self):
-        """Start the monitoring system"""
-        # Create templates directory and file
-        import os
-        os.makedirs('templates', exist_ok=True)
+    try:
+        temp_c = data[3] / 10.0
+        humidity = data[5]
         
-        # Create HTML template with new design
-        html_template = '''<!DOCTYPE html>
+        if -40 <= temp_c <= 85 and 0 <= humidity <= 100:
+            return {
+                'temperature_c': round(temp_c, 1),
+                'temperature_f': round((temp_c * 9/5) + 32, 1),
+                'humidity': round(humidity),
+            }
+        else:
+            logger.warning(f"Parsed values out of range: temp={temp_c}, humidity={humidity}")
+    except Exception as e:
+        logger.error(f"Parse error: {e}")
+    return None
+
+async def read_sensor_once(name, address):
+    """Connects to a sensor, gets one reading, and disconnects."""
+    logger.info(f"Attempting to read from {name}...")
+    client = None
+    notification_started = False
+    
+    try:
+        data_received = asyncio.Event()
+        
+        def notification_handler(sender, data):
+            logger.info(f"Raw data from {name}: {data.hex()} (length: {len(data)})")
+            parsed_data = parse_tp357s_data(data)
+            if parsed_data:
+                global_sensor_data[name] = {
+                    **parsed_data,
+                    'last_updated': datetime.now().isoformat(),
+                    'status': 'online'
+                }
+                logger.info(f"SUCCESS: {name} - {parsed_data['temperature_c']}°C, {parsed_data['humidity']}% ")
+                data_received.set()
+
+        # Explicit connection management
+        client = BleakClient(address, timeout=CONNECTION_TIMEOUT)
+        logger.info(f"Connecting to {name}...")
+        await client.connect()
+        
+        if not client.is_connected:
+            logger.warning(f"Could not connect to {name}.")
+            global_sensor_data[name] = {'status': 'offline', 'last_updated': datetime.now().isoformat()}
+            return
+
+        logger.info(f"Connected to {name}, starting notifications...")
+        await client.start_notify(DATA_CHAR_UUID, notification_handler)
+        notification_started = True
+        
+        try:
+            await asyncio.wait_for(data_received.wait(), timeout=10)
+            logger.info(f"Data received from {name}, disconnecting...")
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout waiting for notification from {name}.")
+            global_sensor_data[name] = {'status': 'timeout', 'last_updated': datetime.now().isoformat()}
+
+    except Exception as e:
+        logger.error(f"Error reading {name}: {e}")
+        global_sensor_data[name] = {'status': 'error', 'last_updated': datetime.now().isoformat()}
+    
+    finally:
+        # Ensure proper cleanup
+        if client and client.is_connected:
+            try:
+                if notification_started:
+                    logger.info(f"Stopping notifications for {name}...")
+                    await client.stop_notify(DATA_CHAR_UUID)
+                    await asyncio.sleep(0.5)  # Give time for cleanup
+                
+                logger.info(f"Disconnecting from {name}...")
+                await client.disconnect()
+                await asyncio.sleep(1)  # Force disconnect delay
+                logger.info(f"Disconnected from {name}")
+                
+            except Exception as cleanup_error:
+                logger.error(f"Error during cleanup for {name}: {cleanup_error}")
+        
+        # Additional cleanup - try to clear any lingering connections
+        try:
+            if client:
+                del client
+        except:
+            pass
+
+async def polling_loop():
+    """The main sensor polling loop."""
+    while True:
+        logger.info("--- Starting new polling cycle ---")
+        for name, address in SENSORS.items():
+            await read_sensor_once(name, address)
+            await asyncio.sleep(2) # Stagger connections
+        
+        logger.info(f"--- Cycle complete, waiting {POLLING_INTERVAL_SECONDS} seconds ---")
+        await asyncio.sleep(POLLING_INTERVAL_SECONDS)
+
+# --- HTML Template ---
+HTML_TEMPLATE = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -192,7 +158,6 @@ class TP357SMonitor:
     
     <style>
         :root {
-            /* Material Design Dark Theme */
             --bg-primary: #121212;
             --bg-secondary: #1e1e1e;
             --bg-elevated: #242424;
@@ -203,26 +168,16 @@ class TP357SMonitor:
             --border-light: #333333;
             --border-medium: #404040;
             --accent-blue: #2196f3;
-            --accent-blue-light: #64b5f6;
             --accent-green: #00e676;
-            --accent-green-light: #4caf50;
             --accent-teal: #00acc1;
-            --accent-cyan: #00bcd4;
             --accent-orange: #ff9800;
             --accent-red: #f44336;
-            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
-            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
             --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.2);
             --elevation-2: 0 2px 6px rgba(0, 0, 0, 0.3);
             --elevation-3: 0 4px 12px rgba(0, 0, 0, 0.4);
         }
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
             background: var(--bg-primary);
@@ -232,11 +187,7 @@ class TP357SMonitor:
             font-weight: 400;
         }
         
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 0 24px;
-        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
         
         .header {
             background: var(--bg-elevated);
@@ -248,11 +199,7 @@ class TP357SMonitor:
             box-shadow: var(--elevation-2);
         }
         
-        .header-content {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
+        .header-content { display: flex; justify-content: space-between; align-items: center; }
         
         .logo {
             font-size: 22px;
@@ -292,18 +239,11 @@ class TP357SMonitor:
             animation: pulse-status 2s infinite;
         }
         
-        @keyframes pulse-status {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
+        @keyframes pulse-status { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
         
-        .main {
-            padding: 32px 0;
-        }
+        .main { padding: 32px 0; }
         
-        .sensor-group {
-            margin-bottom: 48px;
-        }
+        .sensor-group { margin-bottom: 48px; }
         
         .sensor-group-header {
             display: flex;
@@ -354,9 +294,23 @@ class TP357SMonitor:
         .device-status-dot {
             width: 6px;
             height: 6px;
-            background: var(--accent-green);
             border-radius: 50%;
+            box-shadow: 0 0 4px;
+        }
+        
+        .device-status-dot.online {
+            background: var(--accent-green);
             box-shadow: 0 0 4px var(--accent-green);
+        }
+        
+        .device-status-dot.offline {
+            background: var(--text-muted);
+            box-shadow: 0 0 4px var(--text-muted);
+        }
+        
+        .device-status-dot.error {
+            background: var(--accent-red);
+            box-shadow: 0 0 4px var(--accent-red);
         }
         
         .current-readings {
@@ -388,10 +342,7 @@ class TP357SMonitor:
             animation: pulse-gradient 3s ease-in-out infinite;
         }
         
-        @keyframes pulse-gradient {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
+        @keyframes pulse-gradient { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
         
         .current-value {
             font-size: 42px;
@@ -418,62 +369,17 @@ class TP357SMonitor:
             font-weight: 500;
         }
         
-        .offline {
-            opacity: 0.5;
-        }
-        
-        .offline .current-value {
-            background: var(--text-muted);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
         @media (max-width: 768px) {
-            .container {
-                padding: 0 16px;
-            }
-            
-            .header {
-                padding: 16px 0;
-            }
-            
-            .logo {
-                font-size: 18px;
-            }
-            
-            .status-pill {
-                font-size: 11px;
-                padding: 6px 12px;
-            }
-            
-            .current-readings {
-                grid-template-columns: 1fr;
-                gap: 16px;
-            }
-            
-            .current-value {
-                font-size: 36px;
-            }
-            
-            .sensor-group-title {
-                font-size: 20px;
-            }
-            
-            .sensor-group-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 12px;
-            }
-            
-            .device-info-compact {
-                flex-wrap: wrap;
-                gap: 12px;
-            }
-            
-            .main {
-                padding: 24px 0;
-            }
+            .container { padding: 0 16px; }
+            .header { padding: 16px 0; }
+            .logo { font-size: 18px; }
+            .status-pill { font-size: 11px; padding: 6px 12px; }
+            .current-readings { grid-template-columns: 1fr; gap: 16px; }
+            .current-value { font-size: 36px; }
+            .sensor-group-title { font-size: 20px; }
+            .sensor-group-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+            .device-info-compact { flex-wrap: wrap; gap: 12px; }
+            .main { padding: 24px 0; }
         }
     </style>
 </head>
@@ -484,7 +390,7 @@ class TP357SMonitor:
                 <div class="logo">Environmental Monitoring</div>
                 <div class="status-pill">
                     <div class="status-dot"></div>
-                    <span id="connection-status">Loading...</span>
+                    <span id="header-status">Connected • Loading...</span>
                 </div>
             </div>
         </div>
@@ -492,109 +398,80 @@ class TP357SMonitor:
 
     <main class="main">
         <div class="container" id="sensor-container">
-            <!-- Sensor groups will be loaded here -->
+            <!-- Sensor data will be loaded here -->
         </div>
     </main>
 
     <script>
-        function getStatusInfo(sensor) {
-            if (sensor.status === 'offline') {
-                return {
-                    color: 'var(--accent-red)',
-                    text: 'Offline'
-                };
-            }
-            
-            // Determine status based on humidity
-            if (sensor.humidity !== null) {
-                if (sensor.humidity < 50) {
-                    return {
-                        color: 'var(--accent-orange)',
-                        text: 'Low Humidity'
-                    };
-                } else if (sensor.humidity > 80) {
-                    return {
-                        color: 'var(--accent-orange)',
-                        text: 'High Humidity'
-                    };
-                } else {
-                    return {
-                        color: 'var(--accent-green)',
-                        text: 'Normal Range'
-                    };
-                }
-            }
-            
-            return {
-                color: 'var(--accent-green)',
-                text: 'Online'
-            };
-        }
+        let sensorAddresses = {};
         
-        function getLastUpdatedText(lastUpdated) {
-            if (!lastUpdated) return 'Never';
-            
-            const now = new Date();
-            const updated = new Date(lastUpdated);
-            const diffSeconds = Math.floor((now - updated) / 1000);
-            
-            if (diffSeconds < 60) {
-                return `Updated ${diffSeconds}s ago`;
-            } else if (diffSeconds < 3600) {
-                return `Updated ${Math.floor(diffSeconds / 60)}m ago`;
-            } else {
-                return `Updated ${Math.floor(diffSeconds / 3600)}h ago`;
-            }
-        }
-        
-        async function updateData() {
+        async function updateDashboard() {
             try {
                 const response = await fetch('/api/data');
                 const data = await response.json();
-                
                 const container = document.getElementById('sensor-container');
+                const headerStatus = document.getElementById('header-status');
+                
                 container.innerHTML = '';
                 
-                let onlineCount = 0;
-                let totalCount = Object.keys(data).length;
+                const sensorCount = Object.keys(data).length;
+                const onlineCount = Object.values(data).filter(s => s.status === 'online').length;
+                headerStatus.textContent = `Connected • ${sensorCount} Sensors • ${onlineCount} Online`;
                 
                 for (const [name, sensor] of Object.entries(data)) {
-                    if (sensor.status === 'online') onlineCount++;
-                    
-                    const statusInfo = getStatusInfo(sensor);
-                    const lastUpdatedText = getLastUpdatedText(sensor.last_updated);
-                    
                     const sensorGroup = document.createElement('div');
                     sensorGroup.className = 'sensor-group';
+                    
+                    let temp_c = (sensor.temperature_c !== null && sensor.temperature_c !== undefined) ? sensor.temperature_c.toFixed(1) : '--';
+                    let humidity = (sensor.humidity !== null && sensor.humidity !== undefined) ? sensor.humidity.toFixed(0) : '--';
+                    let last_updated = sensor.last_updated ? new Date(sensor.last_updated).toLocaleTimeString() : 'Never';
+                    
+                    let statusText = 'Offline';
+                    let statusClass = 'offline';
+                    if (sensor.status === 'online') {
+                        statusText = 'Online';
+                        statusClass = 'online';
+                    } else if (sensor.status === 'error') {
+                        statusText = 'Error';
+                        statusClass = 'error';
+                    } else if (sensor.status === 'timeout') {
+                        statusText = 'Timeout';
+                        statusClass = 'error';
+                    }
+                    
+                    // Get MAC address from SENSORS config
+                    let macAddress = 'Unknown';
+                    if (name === 'Colonisation Bin') macAddress = 'E5:35:C4:81:8D:8C';
+                    if (name === 'Fruiting Bucket') macAddress = 'C1:92:D2:5A:72:3E';
                     
                     sensorGroup.innerHTML = `
                         <div class="sensor-group-header">
                             <h2 class="sensor-group-title">${name}</h2>
                             <div class="device-info-compact">
                                 <div class="device-info-item">
-                                    <span class="device-mac">${name === 'Colonisation Box' ? 'E5:35:C4:81:8D:8C' : 'C1:92:D2:5A:72:3E'}</span>
+                                    <span class="device-mac">${macAddress}</span>
                                 </div>
                                 <div class="device-info-item">
                                     <div class="device-status">
-                                        <div class="device-status-dot" style="background: ${statusInfo.color}; box-shadow: 0 0 4px ${statusInfo.color};"></div>
-                                        <span style="color: ${statusInfo.color};">${statusInfo.text}</span>
+                                        <div class="device-status-dot ${statusClass}"></div>
+                                        <span style="color: var(--accent-${statusClass === 'online' ? 'green' : statusClass === 'error' ? 'red' : 'text-muted'});">${statusText}</span>
                                     </div>
                                 </div>
                                 <div class="device-info-item">
-                                    <span>${lastUpdatedText}</span>
+                                    <span>Updated ${last_updated}</span>
                                 </div>
                             </div>
                         </div>
                         
                         <div class="current-readings">
-                            <div class="current-card ${sensor.status === 'offline' ? 'offline' : ''}">
+                            <div class="current-card">
                                 <div class="current-label">LIVE TEMPERATURE</div>
-                                <div class="current-value">${sensor.temperature_c ? sensor.temperature_c : '--'}°C</div>
+                                <div class="current-value">${temp_c}°C</div>
                                 <div class="current-sublabel">Real-time reading</div>
                             </div>
-                            <div class="current-card ${sensor.status === 'offline' ? 'offline' : ''}">
+                            <div class="current-card">
                                 <div class="current-label">LIVE HUMIDITY</div>
-                                <div class="current-value">${sensor.humidity !== null ? sensor.humidity : '--'}%</div>
+                                <div class="current-value">${humidity}%</div>
                                 <div class="current-sublabel">Real-time reading</div>
                             </div>
                         </div>
@@ -602,68 +479,33 @@ class TP357SMonitor:
                     
                     container.appendChild(sensorGroup);
                 }
-                
-                // Update connection status
-                const connectionStatus = document.getElementById('connection-status');
-                connectionStatus.textContent = `Connected • ${onlineCount}/${totalCount} Sensors • ${getUptimeText()}`;
-                
             } catch (error) {
-                console.error('Failed to update data:', error);
-                const connectionStatus = document.getElementById('connection-status');
-                connectionStatus.textContent = 'Connection Error';
+                console.error("Failed to fetch sensor data:", error);
+                document.getElementById('header-status').textContent = 'Connection Error';
             }
         }
-        
-        function getUptimeText() {
-            // Simple uptime calculation (this would be better calculated server-side)
-            const uptimeMs = performance.now();
-            const uptimeSeconds = Math.floor(uptimeMs / 1000);
-            const hours = Math.floor(uptimeSeconds / 3600);
-            const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-            
-            if (hours > 0) {
-                return `${hours}h ${minutes}m`;
-            } else if (minutes > 0) {
-                return `${minutes}m`;
-            } else {
-                return '<1m';
-            }
-        }
-        
-        // Update immediately and then every 10 seconds
-        updateData();
-        setInterval(updateData, 10000);
+
+        setInterval(updateDashboard, 5000);
+        updateDashboard();
     </script>
 </body>
-</html>'''
-        
-        with open('templates/dashboard.html', 'w') as f:
-            f.write(html_template)
-        
-        print("🌡️ TP357S Monitor Starting...")
-        print(f"📊 Web dashboard: http://192.168.5.40:{self.config['web_port']}")
-        print(f"⏰ Polling interval: {self.config['polling_interval_seconds']} seconds")
-        print("📱 Phone app can be used between polling cycles")
-        print("Press Ctrl+C to stop\n")
-        
-        # Start sensor polling in background
-        def run_polling():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.poll_sensors())
-        
-        polling_thread = threading.Thread(target=run_polling, daemon=True)
-        polling_thread.start()
-        
-        # Start web server (blocking)
-        try:
-            self.run_web_server()
-        except KeyboardInterrupt:
-            print("\n🛑 Monitor stopped by user")
+</html>
+"""
 
-def main():
-    monitor = TP357SMonitor()
-    monitor.start_monitoring()
+# --- Main Execution ---
+def run_async_loop():
+    """Runs the asyncio event loop in a separate thread."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(polling_loop())
 
 if __name__ == "__main__":
-    main()
+    logger.info("Starting ThermoPro Dashboard...")
+    
+    # Start the Bluetooth polling in a background thread
+    polling_thread = threading.Thread(target=run_async_loop, daemon=True)
+    polling_thread.start()
+    
+    # Start the Flask web server
+    logger.info(f"Dashboard available at http://localhost:{WEB_PORT}")
+    app.run(host='0.0.0.0', port=WEB_PORT, debug=False)

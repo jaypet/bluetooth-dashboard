@@ -1,0 +1,610 @@
+#!/usr/bin/env python3
+"""
+TP357S Dashboard - Local Test Version
+Simulates sensor data for UI testing without Bluetooth dependencies
+"""
+
+import time
+import random
+from datetime import datetime
+from flask import Flask, render_template, jsonify
+import threading
+
+class MockTP357SMonitor:
+    def __init__(self):
+        # Configuration
+        self.config = {
+            'web_port': 4999
+        }
+        
+        self.sensors = {
+            "Colonisation Box": "E5:35:C4:81:8D:8C",
+            "Fruiting Bucket": "C1:92:D2:5A:72:3E"
+        }
+        
+        # Mock data storage
+        self.latest_data = {}
+        self.last_updated = {}
+        self.start_time = time.time()
+        
+        # Initialize with mock data
+        self.update_mock_data()
+        
+        # Web app
+        self.app = Flask(__name__)
+        self.setup_routes()
+        
+    def setup_routes(self):
+        @self.app.route('/')
+        def index():
+            return render_template('dashboard.html')
+        
+        @self.app.route('/api/data')
+        def get_data():
+            response_data = {}
+            for name in self.sensors:
+                if name in self.latest_data:
+                    response_data[name] = {
+                        **self.latest_data[name],
+                        'last_updated': self.last_updated[name].isoformat() if name in self.last_updated else None,
+                        'status': 'online'
+                    }
+                else:
+                    response_data[name] = {
+                        'temperature_c': None,
+                        'temperature_f': None,
+                        'humidity': None,
+                        'status': 'offline',
+                        'last_updated': None
+                    }
+            return jsonify(response_data)
+    
+    def update_mock_data(self):
+        """Generate realistic mock sensor data"""
+        # Colonisation Box - Normal range
+        temp1 = 21.5 + random.uniform(-1.0, 1.5)  # 20.5-23°C
+        humidity1 = 65 + random.uniform(-10, 10)   # 55-75%
+        
+        # Fruiting Bucket - Lower humidity
+        temp2 = 21.3 + random.uniform(-0.8, 1.2)  # 20.5-22.5°C  
+        humidity2 = 42 + random.uniform(-5, 8)     # 37-50%
+        
+        self.latest_data["Colonisation Box"] = {
+            'temperature_c': round(temp1, 1),
+            'temperature_f': round((temp1 * 9/5) + 32, 1),
+            'humidity': round(humidity1),
+            'raw_data': 'mock_data'
+        }
+        
+        self.latest_data["Fruiting Bucket"] = {
+            'temperature_c': round(temp2, 1), 
+            'temperature_f': round((temp2 * 9/5) + 32, 1),
+            'humidity': round(humidity2),
+            'raw_data': 'mock_data'
+        }
+        
+        # Update timestamps
+        now = datetime.now()
+        self.last_updated["Colonisation Box"] = now
+        self.last_updated["Fruiting Bucket"] = now
+    
+    def simulate_sensor_updates(self):
+        """Simulate sensor data updates every 30 seconds"""
+        while True:
+            time.sleep(30)  # Update every 30 seconds
+            self.update_mock_data()
+            print(f"Mock data updated: {datetime.now().strftime('%H:%M:%S')}")
+    
+    def run_web_server(self):
+        """Run the Flask web server"""
+        self.app.run(host='0.0.0.0', port=self.config['web_port'], debug=False)
+    
+    def start_monitoring(self):
+        """Start the monitoring system"""
+        # Create templates directory and file
+        import os
+        os.makedirs('templates', exist_ok=True)
+        
+        # Create HTML template with new design
+        html_template = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Environmental Monitoring Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            /* Material Design Dark Theme */
+            --bg-primary: #121212;
+            --bg-secondary: #1e1e1e;
+            --bg-elevated: #242424;
+            --bg-surface: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #b3b3b3;
+            --text-muted: #808080;
+            --border-light: #333333;
+            --border-medium: #404040;
+            --accent-blue: #2196f3;
+            --accent-blue-light: #64b5f6;
+            --accent-green: #00e676;
+            --accent-green-light: #4caf50;
+            --accent-teal: #00acc1;
+            --accent-cyan: #00bcd4;
+            --accent-orange: #ff9800;
+            --accent-red: #f44336;
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+            --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.2);
+            --elevation-2: 0 2px 6px rgba(0, 0, 0, 0.3);
+            --elevation-3: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: var(--bg-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            font-weight: 400;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        .header {
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-light);
+            padding: 24px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--elevation-2);
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo::before {
+            content: '●';
+            color: var(--accent-blue);
+            font-size: 24px;
+        }
+        
+        .status-pill {
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-teal));
+            color: #000000;
+            padding: 8px 16px;
+            border-radius: 24px;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: var(--elevation-1);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #000000;
+            border-radius: 50%;
+            animation: pulse-status 2s infinite;
+        }
+        
+        @keyframes pulse-status {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .main {
+            padding: 32px 0;
+        }
+        
+        .sensor-group {
+            margin-bottom: 48px;
+        }
+        
+        .sensor-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid;
+            border-image: linear-gradient(90deg, var(--accent-blue), var(--accent-green)) 1;
+        }
+        
+        .sensor-group-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+        
+        .device-info-compact {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 12px;
+        }
+        
+        .device-info-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+        }
+        
+        .device-mac {
+            font-family: 'Courier New', monospace;
+            background: var(--bg-surface);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border-light);
+            color: var(--text-muted);
+        }
+        
+        .device-status {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .device-status-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            box-shadow: 0 0 4px var(--accent-green);
+        }
+        
+        .current-readings {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+        
+        .current-card {
+            background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-surface) 100%);
+            border: 2px solid var(--accent-blue);
+            border-radius: 20px;
+            padding: 28px;
+            text-align: center;
+            box-shadow: var(--elevation-3), 0 0 20px rgba(33, 150, 243, 0.15);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .current-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+            animation: pulse-gradient 3s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-gradient {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .current-value {
+            font-size: 42px;
+            font-weight: 300;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .current-label {
+            font-size: 12px;
+            color: var(--text-primary);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+        
+        .current-sublabel {
+            font-size: 10px;
+            color: var(--accent-blue);
+            font-weight: 500;
+        }
+        
+        .offline {
+            opacity: 0.5;
+        }
+        
+        .offline .current-value {
+            background: var(--text-muted);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .test-badge {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            background: var(--accent-orange);
+            color: #000;
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            z-index: 1000;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 16px;
+            }
+            
+            .header {
+                padding: 16px 0;
+            }
+            
+            .logo {
+                font-size: 18px;
+            }
+            
+            .status-pill {
+                font-size: 11px;
+                padding: 6px 12px;
+            }
+            
+            .current-readings {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+            
+            .current-value {
+                font-size: 36px;
+            }
+            
+            .sensor-group-title {
+                font-size: 20px;
+            }
+            
+            .sensor-group-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            
+            .device-info-compact {
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+            
+            .main {
+                padding: 24px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="test-badge">MOCK DATA</div>
+    
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Environmental Monitoring</div>
+                <div class="status-pill">
+                    <div class="status-dot"></div>
+                    <span id="connection-status">Loading...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="container" id="sensor-container">
+            <!-- Sensor groups will be loaded here -->
+        </div>
+    </main>
+
+    <script>
+        function getStatusInfo(sensor) {
+            if (sensor.status === 'offline') {
+                return {
+                    color: 'var(--accent-red)',
+                    text: 'Offline'
+                };
+            }
+            
+            // Determine status based on humidity
+            if (sensor.humidity !== null) {
+                if (sensor.humidity < 50) {
+                    return {
+                        color: 'var(--accent-orange)',
+                        text: 'Low Humidity'
+                    };
+                } else if (sensor.humidity > 80) {
+                    return {
+                        color: 'var(--accent-orange)',
+                        text: 'High Humidity'
+                    };
+                } else {
+                    return {
+                        color: 'var(--accent-green)',
+                        text: 'Normal Range'
+                    };
+                }
+            }
+            
+            return {
+                color: 'var(--accent-green)',
+                text: 'Online'
+            };
+        }
+        
+        function getLastUpdatedText(lastUpdated) {
+            if (!lastUpdated) return 'Never';
+            
+            const now = new Date();
+            const updated = new Date(lastUpdated);
+            const diffSeconds = Math.floor((now - updated) / 1000);
+            
+            if (diffSeconds < 60) {
+                return `Updated ${diffSeconds}s ago`;
+            } else if (diffSeconds < 3600) {
+                return `Updated ${Math.floor(diffSeconds / 60)}m ago`;
+            } else {
+                return `Updated ${Math.floor(diffSeconds / 3600)}h ago`;
+            }
+        }
+        
+        async function updateData() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                const container = document.getElementById('sensor-container');
+                container.innerHTML = '';
+                
+                let onlineCount = 0;
+                let totalCount = Object.keys(data).length;
+                
+                for (const [name, sensor] of Object.entries(data)) {
+                    if (sensor.status === 'online') onlineCount++;
+                    
+                    const statusInfo = getStatusInfo(sensor);
+                    const lastUpdatedText = getLastUpdatedText(sensor.last_updated);
+                    
+                    const sensorGroup = document.createElement('div');
+                    sensorGroup.className = 'sensor-group';
+                    
+                    sensorGroup.innerHTML = `
+                        <div class="sensor-group-header">
+                            <h2 class="sensor-group-title">${name}</h2>
+                            <div class="device-info-compact">
+                                <div class="device-info-item">
+                                    <span class="device-mac">${name === 'Colonisation Box' ? 'E5:35:C4:81:8D:8C' : 'C1:92:D2:5A:72:3E'}</span>
+                                </div>
+                                <div class="device-info-item">
+                                    <div class="device-status">
+                                        <div class="device-status-dot" style="background: ${statusInfo.color}; box-shadow: 0 0 4px ${statusInfo.color};"></div>
+                                        <span style="color: ${statusInfo.color};">${statusInfo.text}</span>
+                                    </div>
+                                </div>
+                                <div class="device-info-item">
+                                    <span>${lastUpdatedText}</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="current-readings">
+                            <div class="current-card ${sensor.status === 'offline' ? 'offline' : ''}">
+                                <div class="current-label">LIVE TEMPERATURE</div>
+                                <div class="current-value">${sensor.temperature_c ? sensor.temperature_c : '--'}°C</div>
+                                <div class="current-sublabel">Real-time reading</div>
+                            </div>
+                            <div class="current-card ${sensor.status === 'offline' ? 'offline' : ''}">
+                                <div class="current-label">LIVE HUMIDITY</div>
+                                <div class="current-value">${sensor.humidity !== null ? sensor.humidity : '--'}%</div>
+                                <div class="current-sublabel">Real-time reading</div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    container.appendChild(sensorGroup);
+                }
+                
+                // Update connection status
+                const connectionStatus = document.getElementById('connection-status');
+                connectionStatus.textContent = `Mock Mode • ${onlineCount}/${totalCount} Sensors • ${getUptimeText()}`;
+                
+            } catch (error) {
+                console.error('Failed to update data:', error);
+                const connectionStatus = document.getElementById('connection-status');
+                connectionStatus.textContent = 'Connection Error';
+            }
+        }
+        
+        function getUptimeText() {
+            const uptimeMs = performance.now();
+            const uptimeSeconds = Math.floor(uptimeMs / 1000);
+            const hours = Math.floor(uptimeSeconds / 3600);
+            const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m`;
+            } else {
+                return '<1m';
+            }
+        }
+        
+        // Update immediately and then every 10 seconds
+        updateData();
+        setInterval(updateData, 10000);
+    </script>
+</body>
+</html>'''
+        
+        with open('templates/dashboard.html', 'w') as f:
+            f.write(html_template)
+        
+        print("🌡️ TP357S Mock Dashboard Starting...")
+        print(f"📊 Web dashboard: http://localhost:{self.config['web_port']}")
+        print("📱 Using simulated sensor data for UI testing")
+        print("🔶 'MOCK DATA' badge shows this is test mode")
+        print("Press Ctrl+C to stop\n")
+        
+        # Start mock sensor updates in background  
+        update_thread = threading.Thread(target=self.simulate_sensor_updates, daemon=True)
+        update_thread.start()
+        
+        # Start web server (blocking)
+        try:
+            self.run_web_server()
+        except KeyboardInterrupt:
+            print("\n🛑 Mock dashboard stopped")
+
+def main():
+    monitor = MockTP357SMonitor()
+    monitor.start_monitoring()
+
+if __name__ == "__main__":
+    main()

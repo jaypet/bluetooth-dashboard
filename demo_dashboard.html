@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Environmental Monitoring Dashboard</title>
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            /* Material Design Dark Theme */
+            --bg-primary: #121212;
+            --bg-secondary: #1e1e1e;
+            --bg-elevated: #242424;
+            --bg-surface: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #b3b3b3;
+            --text-muted: #808080;
+            --border-light: #333333;
+            --border-medium: #404040;
+            --accent-blue: #2196f3;
+            --accent-blue-light: #64b5f6;
+            --accent-green: #00e676;
+            --accent-green-light: #4caf50;
+            --accent-teal: #00acc1;
+            --accent-cyan: #00bcd4;
+            --accent-orange: #ff9800;
+            --accent-red: #f44336;
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+            --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.2);
+            --elevation-2: 0 2px 6px rgba(0, 0, 0, 0.3);
+            --elevation-3: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: var(--bg-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            font-weight: 400;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        .header {
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-light);
+            padding: 24px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--elevation-2);
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo::before {
+            content: '●';
+            color: var(--accent-blue);
+            font-size: 24px;
+        }
+        
+        .status-pill {
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-teal));
+            color: #000000;
+            padding: 8px 16px;
+            border-radius: 24px;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: var(--elevation-1);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #000000;
+            border-radius: 50%;
+            animation: pulse-status 2s infinite;
+        }
+        
+        @keyframes pulse-status {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .main {
+            padding: 32px 0;
+        }
+        
+        .grid {
+            display: grid;
+            gap: 24px;
+        }
+        
+        .grid-1 {
+            grid-template-columns: 1fr;
+        }
+        
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        }
+        
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+        
+        .sensor-group {
+            margin-bottom: 48px;
+        }
+        
+        .sensor-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid;
+            border-image: linear-gradient(90deg, var(--accent-blue), var(--accent-green)) 1;
+        }
+        
+        .sensor-group-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+        
+        .device-info-compact {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 12px;
+        }
+        
+        .device-info-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+        }
+        
+        .device-mac {
+            font-family: 'Courier New', monospace;
+            background: var(--bg-surface);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border-light);
+            color: var(--text-muted);
+        }
+        
+        .device-status {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .device-status-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            box-shadow: 0 0 4px var(--accent-green);
+        }
+        
+        .current-readings {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+        
+        .historical-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        
+        .current-card {
+            background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-surface) 100%);
+            border: 2px solid var(--accent-blue);
+            border-radius: 20px;
+            padding: 28px;
+            text-align: center;
+            box-shadow: var(--elevation-3), 0 0 20px rgba(33, 150, 243, 0.15);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .current-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+            animation: pulse-gradient 3s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-gradient {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .current-value {
+            font-size: 42px;
+            font-weight: 300;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .current-label {
+            font-size: 12px;
+            color: var(--text-primary);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+        
+        .current-sublabel {
+            font-size: 10px;
+            color: var(--accent-blue);
+            font-weight: 500;
+        }
+        
+        .historical-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-light);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+        
+        .historical-card:hover {
+            border-color: var(--border-medium);
+            box-shadow: var(--elevation-1);
+        }
+        
+        .historical-value {
+            font-size: 24px;
+            font-weight: 400;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        
+        .historical-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .section-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border-medium), transparent);
+            margin: 32px 0;
+            position: relative;
+        }
+        
+        .section-divider::before {
+            content: 'HISTORICAL DATA';
+            position: absolute;
+            top: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-primary);
+            padding: 0 16px;
+            font-size: 10px;
+            color: var(--text-muted);
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+        
+        .mini-chart {
+            height: 200px;
+            margin-top: 16px;
+        }
+        
+        .card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-light);
+            border-radius: 16px;
+            padding: 28px;
+            box-shadow: var(--elevation-2);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+        }
+        
+        .card:hover {
+            box-shadow: var(--elevation-3);
+            transform: translateY(-2px);
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-light);
+        }
+        
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        
+        .sensor-location {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+            font-family: 'Courier New', monospace;
+            background: var(--bg-surface);
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border-light);
+        }
+        
+        .metric-primary {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .metric-value {
+            font-size: 56px;
+            font-weight: 300;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+        }
+        
+        .metric-unit {
+            font-size: 20px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+        
+        .metric-secondary {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .metric-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .metric-value-sm {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-light);
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--accent-green);
+        }
+        
+        .status-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .chart-container {
+            height: 300px;
+            margin-top: 16px;
+        }
+        
+        .stats-grid {
+            margin-bottom: 32px;
+        }
+        
+        .stat-card {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: 400;
+            background: linear-gradient(135deg, var(--accent-blue-light), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            line-height: 1.2;
+        }
+        
+        .chart-card {
+            margin-bottom: 24px;
+        }
+        
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 16px;
+            }
+            
+            .header {
+                padding: 16px 0;
+            }
+            
+            .logo {
+                font-size: 18px;
+            }
+            
+            .status-pill {
+                font-size: 11px;
+                padding: 6px 12px;
+            }
+            
+            .grid-2, .grid-4 {
+                grid-template-columns: 1fr;
+            }
+            
+            .current-readings {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+            
+            .historical-stats {
+                grid-template-columns: 1fr;
+            }
+            
+            .current-value {
+                font-size: 36px;
+            }
+            
+            .metric-value {
+                font-size: 48px;
+            }
+            
+            .sensor-group-title {
+                font-size: 20px;
+            }
+            
+            .sensor-group-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            
+            .device-info-compact {
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+            
+            .main {
+                padding: 24px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Environmental Monitoring</div>
+                <div style="display: flex; align-items: center; gap: 16px;">
+                    <div class="status-pill">
+                        <div class="status-dot"></div>
+                        Connected • 2 Sensors • 2d 14h Uptime
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            <!-- Colonisation Box Group -->
+            <div class="sensor-group">
+                <div class="sensor-group-header">
+                    <h2 class="sensor-group-title">Colonisation Box</h2>
+                    <div class="device-info-compact">
+                        <div class="device-info-item">
+                            <span class="device-mac">E5:35:C4:81:8D:8C</span>
+                        </div>
+                        <div class="device-info-item">
+                            <div class="device-status">
+                                <div class="device-status-dot"></div>
+                                <span style="color: var(--accent-green);">Normal Range</span>
+                            </div>
+                        </div>
+                        <div class="device-info-item">
+                            <span>Updated 12s ago</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Current Readings -->
+                <div class="current-readings">
+                    <div class="current-card">
+                        <div class="current-label">LIVE TEMPERATURE</div>
+                        <div class="current-value">21.8°C</div>
+                        <div class="current-sublabel">Real-time reading</div>
+                    </div>
+                    <div class="current-card">
+                        <div class="current-label">LIVE HUMIDITY</div>
+                        <div class="current-value">66%</div>
+                        <div class="current-sublabel">Real-time reading</div>
+                    </div>
+                </div>
+
+                <!-- Section Divider -->
+                <div class="section-divider"></div>
+
+                <!-- Historical Averages -->
+                <div class="historical-stats">
+                    <div class="historical-card">
+                        <div class="historical-value">22.1°C</div>
+                        <div class="historical-label">24h Average Temp</div>
+                    </div>
+                    <div class="historical-card">
+                        <div class="historical-value">68%</div>
+                        <div class="historical-label">24h Average Humidity</div>
+                    </div>
+                </div>
+
+
+                <!-- Historical Charts -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Temperature History (24h)</div>
+                    </div>
+                    <div class="mini-chart">
+                        <canvas id="colonisationTempChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Humidity History (24h)</div>
+                    </div>
+                    <div class="mini-chart">
+                        <canvas id="colonisationHumidChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Fruiting Bucket Group -->
+            <div class="sensor-group">
+                <div class="sensor-group-header">
+                    <h2 class="sensor-group-title">Fruiting Bucket</h2>
+                    <div class="device-info-compact">
+                        <div class="device-info-item">
+                            <span class="device-mac">C1:92:D2:5A:72:3E</span>
+                        </div>
+                        <div class="device-info-item">
+                            <div class="device-status">
+                                <div class="device-status-dot"></div>
+                                <span style="color: var(--accent-orange);">Low Humidity</span>
+                            </div>
+                        </div>
+                        <div class="device-info-item">
+                            <span>Updated 8s ago</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Current Readings -->
+                <div class="current-readings">
+                    <div class="current-card">
+                        <div class="current-label">LIVE TEMPERATURE</div>
+                        <div class="current-value">21.6°C</div>
+                        <div class="current-sublabel">Real-time reading</div>
+                    </div>
+                    <div class="current-card">
+                        <div class="current-label">LIVE HUMIDITY</div>
+                        <div class="current-value">42%</div>
+                        <div class="current-sublabel">Real-time reading</div>
+                    </div>
+                </div>
+
+                <!-- Section Divider -->
+                <div class="section-divider"></div>
+
+                <!-- Historical Averages -->
+                <div class="historical-stats">
+                    <div class="historical-card">
+                        <div class="historical-value">21.4°C</div>
+                        <div class="historical-label">24h Average Temp</div>
+                    </div>
+                    <div class="historical-card">
+                        <div class="historical-value">45%</div>
+                        <div class="historical-label">24h Average Humidity</div>
+                    </div>
+                </div>
+
+
+                <!-- Historical Charts -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Temperature History (24h)</div>
+                    </div>
+                    <div class="mini-chart">
+                        <canvas id="fruitingTempChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Humidity History (24h)</div>
+                    </div>
+                    <div class="mini-chart">
+                        <canvas id="fruitingHumidChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Generate sample data for demonstration
+        const hours = [];
+        const temp1Data = [];
+        const temp2Data = [];
+        const humid1Data = [];
+        const humid2Data = [];
+
+        for (let i = 23; i >= 0; i--) {
+            const time = new Date();
+            time.setHours(time.getHours() - i);
+            hours.push(time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }));
+            
+            temp1Data.push(21.5 + Math.sin(i * 0.3) * 1.5 + (Math.random() - 0.5) * 0.5);
+            temp2Data.push(21.3 + Math.cos(i * 0.2) * 1.2 + (Math.random() - 0.5) * 0.4);
+            humid1Data.push(65 + Math.sin(i * 0.4) * 15 + (Math.random() - 0.5) * 3);
+            humid2Data.push(45 + Math.cos(i * 0.3) * 10 + (Math.random() - 0.5) * 2);
+        }
+
+        // Chart configuration
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 20,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    border: {
+                        display: false
+                    },
+                    grid: {
+                        color: '#404040',
+                        drawTicks: false
+                    },
+                    ticks: {
+                        color: '#b3b3b3',
+                        font: {
+                            size: 11
+                        }
+                    }
+                },
+                y: {
+                    beginAtZero: false,
+                    border: {
+                        display: false
+                    },
+                    grid: {
+                        color: '#404040',
+                        drawTicks: false
+                    },
+                    ticks: {
+                        color: '#b3b3b3',
+                        font: {
+                            size: 11
+                        }
+                    }
+                }
+            },
+            elements: {
+                point: {
+                    radius: 0,
+                    hoverRadius: 4
+                }
+            }
+        };
+
+        // Individual sensor chart options
+        const sensorChartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    border: { display: false },
+                    grid: { color: '#404040', drawTicks: false },
+                    ticks: { color: '#b3b3b3', font: { size: 10 } }
+                },
+                y: {
+                    beginAtZero: false,
+                    border: { display: false },
+                    grid: { color: '#404040', drawTicks: false },
+                    ticks: { color: '#b3b3b3', font: { size: 10 } }
+                }
+            },
+            elements: {
+                point: { radius: 0, hoverRadius: 4 }
+            }
+        };
+
+        // Colonisation Box Temperature Chart
+        const colonisationTempCtx = document.getElementById('colonisationTempChart').getContext('2d');
+        new Chart(colonisationTempCtx, {
+            type: 'line',
+            data: {
+                labels: hours,
+                datasets: [{
+                    data: temp1Data,
+                    borderColor: '#2196f3',
+                    backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: sensorChartOptions
+        });
+
+        // Colonisation Box Humidity Chart
+        const colonisationHumidCtx = document.getElementById('colonisationHumidChart').getContext('2d');
+        new Chart(colonisationHumidCtx, {
+            type: 'line',
+            data: {
+                labels: hours,
+                datasets: [{
+                    data: humid1Data,
+                    borderColor: '#00acc1',
+                    backgroundColor: 'rgba(0, 172, 193, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: sensorChartOptions
+        });
+
+        // Fruiting Bucket Temperature Chart
+        const fruitingTempCtx = document.getElementById('fruitingTempChart').getContext('2d');
+        new Chart(fruitingTempCtx, {
+            type: 'line',
+            data: {
+                labels: hours,
+                datasets: [{
+                    data: temp2Data,
+                    borderColor: '#00e676',
+                    backgroundColor: 'rgba(0, 230, 118, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: sensorChartOptions
+        });
+
+        // Fruiting Bucket Humidity Chart
+        const fruitingHumidCtx = document.getElementById('fruitingHumidChart').getContext('2d');
+        new Chart(fruitingHumidCtx, {
+            type: 'line',
+            data: {
+                labels: hours,
+                datasets: [{
+                    data: humid2Data,
+                    borderColor: '#00bcd4',
+                    backgroundColor: 'rgba(0, 188, 212, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: sensorChartOptions
+        });
+
+        // Update timestamps periodically
+        setInterval(() => {
+            const statusTexts = document.querySelectorAll('.status-text');
+            statusTexts.forEach((text, index) => {
+                const seconds = Math.floor(Math.random() * 30) + 1;
+                text.textContent = `Online • Updated ${seconds} seconds ago`;
+            });
+        }, 5000);
+    </script>
+</body>
+</html>
